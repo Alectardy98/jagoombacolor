@@ -1402,44 +1402,45 @@ const configdata configtemplate={
 	"CFG"
 };
 
-void writeconfig()
-{
-	if (sram_copy == NULL)
-	{
-		getsram();
-	}
-	configdata *cfg;
-	int i,j;
+void writeconfig() {
+    if (sram_copy == NULL) {
+        getsram();
+    }
 
-	if(!using_flashcart())
-		return;
-	
-	compressed_save = sram_copy + 0xE000;
-	current_save_file = (stateheader*)compressed_save;
-	
-	i=findstate(0,CONFIGSAVE,(stateheader**)&cfg);
-	if(i<0) {//make new config
-		memcpy(compressed_save,&configtemplate,sizeof(configdata));
-		cfg=current_save_file;
-	}
-//	cfg->bordercolor=bcolor;					//store current border type
-	cfg->palettebank=palettebank;				//store current DMG palette
-	j = stime & 0x3;							//store current autosleep time
-//	j |= (gbadetect & 0x1)<<3;					//store current gbadetect setting
-	j |= (request_gb_type & 0x3)<<2;			//store current request_gb_type setting
-	j |= (autostate & 0x1)<<4;					//store current autostate setting
-	j |= (gammavalue & 0x7)<<5;					//store current gamma setting
-	cfg->misc = j;
-	cfg->sram_checksum=sram_owner;
-	if(i<0) {	//create new config
-		updatestates(0,0,CONFIGSAVE);
-	} else {		//config already exists, update sram directly (faster)
-		bytecopy((u8*)cfg-sram_copy+MEM_SRAM,(u8*)cfg,sizeof(configdata));
-	}
-	
-	compressed_save = NULL;
-	current_save_file = NULL;
+    configdata *cfg = NULL;
+    if (!using_flashcart()) {
+        return;
+    }
+
+    compressed_save = sram_copy + 0xE000;
+    current_save_file = (stateheader*)compressed_save;
+
+    // Check for existing state or create a new one
+    int i = findstate(0, CONFIGSAVE, (stateheader**)&cfg);
+    if (i < 0) {  // New config
+        memcpy(compressed_save, &configtemplate, sizeof(configdata));
+        cfg = (configdata*)current_save_file;  // Cast here
+    }
+
+    // Store configuration settings
+    cfg->palettebank = palettebank;
+    int j = (stime & 0x3) |
+            ((request_gb_type & 0x3) << 2) |
+            ((autostate & 0x1) << 4) |
+            ((gammavalue & 0x7) << 5);
+    cfg->misc = j;
+    cfg->sram_checksum = sram_owner;
+
+    if (i < 0) {  // Create new config
+        updatestates(0, 0, CONFIGSAVE);
+    } else {  // Config exists, update SRAM directly
+        bytecopy((u8*)cfg - sram_copy + MEM_SRAM, (u8*)cfg, sizeof(configdata));
+    }
+
+    compressed_save = NULL;
+    current_save_file = NULL;
 }
+
 
 void readconfig() {
 	int i;

@@ -1,0 +1,11 @@
+export DEVKITPRO=/opt/devkitpro
+export DEVKITARM=$DEVKITPRO/devkitARM
+export PATH=$DEVKITARM/bin:$PATH
+
+To build:
+
+Install the latest DevkitPro GBA tools
+Navigate Msys2 to this directory
+make
+Rename font.lz77.o to font.o and fontpal.bin.o to fontpal.o
+make
