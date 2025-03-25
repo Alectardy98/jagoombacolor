@@ -1381,99 +1381,68 @@ void readconfig() {
 
 /* savestate2() and cleanup_ewram() remain unchanged. */
 
-int savestate2()
+int savestate2(void)
 {
-	sram_copy = NULL;
-	lzo_workspace = ewram_start;
-	uncompressed_save = ewram_start + 0x10000;
-	
-	u8 *workspace = lzo_workspace;
-	u8 *uncompressedState = uncompressed_save;
-	
-	int stateSize = SaveState(uncompressedState);
-	if (stateSize == 0)
-	{
-		goto fail;
-	}
-	
-	compressed_save = uncompressed_save + stateSize;
-	current_save_file = (stateheader*)compressed_save;
-	
-	u8 *out = compressed_save + sizeof(stateheader) + 8;
-	lzo_uint compressedSize1;
-	lzo1x_1_compress(uncompressedState, stateSize, out, &compressedSize1, workspace);
-	u32 part1_size = ((compressedSize1 - 1) | 3) + 1;
-	
-	*((u32*)(out - 4)) = part1_size;
-	*((u32*)(out - 8)) = stateSize;
-	
-	int outSize = out + part1_size + 8 - compressed_save;
-	
-	memcpy32(uncompressed_save, compressed_save, outSize);
-	out = out - (compressed_save - uncompressed_save);
-	compressed_save = uncompressed_save;
-	current_save_file = (stateheader*)compressed_save;
-	uncompressed_save = NULL;
-	
-	u8 *out2 = out + part1_size + 8;
-	
-	int sramSize = 0;
-	if (g_sramsize == 0)
-	{
-		sramSize = 0;
-	}
-	else if (g_sramsize == 3)
-	{
-		sramSize = 0x8000;
-	}
-	else
-	{
-		sramSize = 0x2000;
-	}
-	
-	int total_size = part1_size + 8 + sizeof(stateheader);
-	
-	if (sramSize > 0)
-	{
-		int sramMaxSize = sramSize + sramSize / 16 + 67;
-		int remainingSpace = 0x10000 - part1_size;
-		lzo_uint compressedSize2;
-		int part2_size;
-		lzo1x_1_compress(XGB_SRAM, sramSize, out2, &compressedSize2, workspace);
-		part2_size = ((compressedSize2 - 1) | 3) + 1;
-		*((u32*)(out2 - 4)) = part2_size;
-		*((u32*)(out2 - 8)) = sramSize;
-		total_size += part2_size + 8;
-	}
-	
-	stateheader* sh = current_save_file;
-	sh->size = total_size;
-	sh->type = STATESAVE;
-	sh->uncompressed_size = stateSize + sramSize;
-	sh->framecount = frametotal;
-	sh->checksum = checksum_this();
-#if POGOSHELL
-    if(pogoshell)
+    // We don’t use compression so we reserve a buffer for the raw state.
+    // We assume uncompressed_save is in EWRAM at a safe offset.
+    uncompressed_save = ewram_start + 0x10000;
+    
+    // SaveState() writes the emulator state into our raw buffer.
+    int stateSize = SaveState(uncompressed_save);
+    if (stateSize == 0)
     {
-		strcpy(sh->title, pogoshell_romname);
+        goto fail;
+    }
+    
+    // Instead of compressing the state we simply set up our header.
+    // (Note: we are no longer adding two extra 32-bit values.)
+    compressed_save = uncompressed_save + stateSize;
+    current_save_file = (stateheader*)compressed_save;
+    
+    stateheader *sh = current_save_file;
+    // The new total size is just the header plus the raw state data.
+    sh->size = sizeof(stateheader) + ((stateSize + 3) & ~3);
+    sh->type = STATESAVE;
+    sh->uncompressed_size = stateSize;
+    sh->framecount = frametotal;
+    sh->checksum = checksum_this();
+#if POGOSHELL
+    if (pogoshell)
+    {
+        strcpy(sh->title, pogoshell_romname);
     }
     else
 #endif
     {
-		strncpy(sh->title, (char*)findrom(romnum)+0x134, 15);
+        strncpy(sh->title, (char*)findrom(romnum)+0x134, 15);
     }
-	uncompressed_save = NULL;
-	lzo_workspace = NULL;
-	cleanup_ewram();
-	return total_size;
+    
+    // Copy the state data right after the header.
+    memcpy((u8*)sh + sizeof(stateheader), uncompressed_save, stateSize);
+    
+    int total_size = sh->size;
+    // Check that our new total size fits into the SRAM region.
+    if(total_size + 8 > save_start)
+        goto fail;
+    
+    // Update the SRAM copy (the 8 extra bytes are for terminator)
+    totalstatesize = total_size;
+    bytecopy(MEM_SRAM, sram_copy, totalstatesize + 8);
+    memset8(MEM_SRAM + totalstatesize + 8, 0, save_start - (totalstatesize + 8));
+    
+    cleanup_ewram();
+    // We can now clear our temporary pointers.
+    uncompressed_save = NULL;
+    compressed_save = NULL;
+    return total_size;
 fail:
-	uncompressed_save = NULL;
-	compressed_save = NULL;
-	current_save_file = NULL;
-	lzo_workspace = NULL;
-	cleanup_ewram();
-	return 0;
+    uncompressed_save = NULL;
+    compressed_save = NULL;
+    current_save_file = NULL;
+    cleanup_ewram();
+    return 0;
 }
+
 
 void cleanup_ewram()
 {
@@ -1509,86 +1478,40 @@ void cleanup_ewram()
 		ewram_canary_2 = 0xDEADBEEF;
 	}
 }
-
 int loadstate2(int romNumber, stateheader *sh)
 {
-	if (sram_copy == NULL)
-	{
-		getsram();
-	}
-	
-	if (romNumber != romnum)
-	{
-		doNotLoadSram = true;
-		int old_auto_border = auto_border;
-		auto_border = 0;
-		loadcart(romNumber, g_emuflags);
-		auto_border = old_auto_border;
-		doNotLoadSram = false;
-	}
-	
-	u8 *src = (u8*)(sh + 1);
-	u32 *src32 = (u32*)src;
-	u32 uncompressedStateSize = *src32++;
-	u32 compressedStateSize = *src32++;
-	src = (u8*)src32;
-	
-	u8 *src2 = src + compressedStateSize;
-	u32 uncompressedSramSize = 0;
-	u32 compressedSramSize = 0;
-	
-	if (g_sramsize == 0 && sh->size != compressedStateSize + 8 + sizeof(stateheader))
-	{
-		return 0;
-	}
-	
-	if (g_sramsize != 0)
-	{
-		src32 = (u32*)src2;
-		uncompressedSramSize = *src32++;
-		compressedSramSize = *src32++;
-		src2 = (u8*)src32;
-		
-		if (sh->size != compressedStateSize + compressedSramSize + 16 + sizeof(stateheader))
-		{
-			return 0;
-		}
-	}
-	
-	if (uncompressedStateSize > 0x10000 || 0 != (uncompressedStateSize & 3) ||
-		compressedStateSize > 0x10000 || 0 != (compressedStateSize & 3) ||
-		uncompressedSramSize > 0x8000 || 0 != (uncompressedSramSize & 3) ||
-		compressedSramSize > 0x8900 || 0 != (compressedSramSize & 3) )
-	{
-		return 0;
-	}
-	
-	uncompressed_save = sram_copy + 0xE000;
-	
-	// For the system state, still decompress as usual
-	lzo_uint bytesDecompressed = compressedStateSize;
-	lzo1x_decompress(src, compressedStateSize, uncompressed_save, &bytesDecompressed, NULL);
-	
-	// [RAW SAVE MODIFICATION]:
-	// Instead of decompressing SRAM, do a raw copy.
-	if (uncompressedSramSize > 0)
-	{
-		memcpy(XGB_SRAM, src2, uncompressedSramSize);
-	}
-	
-	int result = LoadState(uncompressed_save, uncompressedStateSize);
-	
-	uncompressed_save = NULL;
-	
-	if (result != 0)
-	{
-		return 0;
-	}
-	
-	frametotal = sh->framecount;
-	setup_sram_after_loadstate();
-	
-	return sh->size;
+    if (sram_copy == NULL)
+    {
+        getsram();
+    }
+    
+    if (romNumber != romnum)
+    {
+        doNotLoadSram = true;
+        int old_auto_border = auto_border;
+        auto_border = 0;
+        loadcart(romNumber, g_emuflags);
+        auto_border = old_auto_border;
+        doNotLoadSram = false;
+    }
+    
+    int stateSize = sh->uncompressed_size;
+    uncompressed_save = ewram_start + 0x10000;
+    // Copy the raw state data from the save file into our work buffer.
+    memcpy(uncompressed_save, (u8*)sh + sizeof(stateheader), stateSize);
+    
+    int result = LoadState(uncompressed_save, stateSize);
+    uncompressed_save = NULL;
+    if (result != 0)
+    {
+        return 0;
+    }
+    
+    frametotal = sh->framecount;
+    setup_sram_after_loadstate();
+    
+    return sh->size;
 }
+
 
 #endif
