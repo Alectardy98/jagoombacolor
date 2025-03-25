@@ -3,11 +3,7 @@
 
 #define GCC 1
 
-#ifndef SRAM_SIZE
-#define SRAM_SIZE 64
-#endif
-
-#define VERSION "v0.5"
+#define VERSION "v0.MOD"
 
 //#define LITTLESOUNDDJ 0
 //Little Sound DJ Hack requires M3/G6/Supercard
