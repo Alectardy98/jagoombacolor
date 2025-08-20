@@ -1,6 +1,6 @@
 #include "includes.h"
 
-static const int savestate_size_estimate = 0xC800;
+static const int savestate_size_estimate __attribute__((unused)) = 0xC800;
 void cleanup_ewram();
 int FindStateByIndex(int index, int type, stateheader **stateptr);
 
@@ -436,7 +436,7 @@ int updatestates(int index,int erase,int type)
 	
 	totalstatesize = newSaveEnd - sram_copy;
 	bytecopy(MEM_SRAM, sram_copy, totalstatesize + 8);
-	memset8(MEM_SRAM + totalstatesize + 8, 0, save_start - (totalstatesize + 8));
+	memset(MEM_SRAM + totalstatesize + 8, 0, save_start - (totalstatesize + 8));
 	return 1;
 	/*
 	
@@ -1210,7 +1210,7 @@ int get_saved_sram(void)
 	// 1 - successfully loaded
 	// 2 - file not found
 	
-	int i,j;
+	int i, j;
 	int retval;
 	u32 chk;
 	configdata *cfg;
@@ -1242,25 +1242,12 @@ int get_saved_sram(void)
 		*/
 //		flush_end_sram();
 		
-		if(j>=0) {//packed SRAM exists: unpack into XGB_SRAM
-			statesize=sh->size-sizeof(stateheader);
-			/*
-			#if LITTLESOUNDDJ
-			if (g_sramsize!=4)
-			{
-				lzo1x_decompress((u8*)(sh+1),statesize,XGB_SRAM,&statesize,NULL);
-			}
-			else
-			{
-				lzo1x_decompress((u8*)(sh+1),statesize,buffer2,&statesize,NULL);
-				memcpy(M3_SRAM_BUFFER,buffer2,0x20000);
-			}
-			#else
-			*/
-			lzo1x_decompress((u8*)(sh+1),statesize,XGB_SRAM,&statesize,NULL);
-			//#endif
-			retval=1;
-		} else { //pack new sram and save it.
+		if (j >= 0) { // packed SRAM exists: unpack into XGB_SRAM
+  		  lzo_uint comp = sh->size - sizeof(stateheader);   // compressed bytes
+  		  lzo_uint out  = sh->uncompressed_size;            // expected uncompressed bytes
+  		  lzo1x_decompress((u8*)(sh + 1), comp, XGB_SRAM, &out, NULL);
+   		 retval = 1;
+		} else {
 			save_new_sram(XGB_SRAM);
 			retval=2;
 		}
@@ -1420,7 +1407,8 @@ void writeconfig()
 	i=findstate(0,CONFIGSAVE,(stateheader**)&cfg);
 	if(i<0) {//make new config
 		memcpy(compressed_save,&configtemplate,sizeof(configdata));
-		cfg=current_save_file;
+        cfg = (configdata*)compressed_save;  // CORRECT: buffer holds a configdata blob
+
 	}
 //	cfg->bordercolor=bcolor;					//store current border type
 	cfg->palettebank=palettebank;				//store current DMG palette
@@ -1550,8 +1538,10 @@ int savestate2()
 	
 	if (sramSize > 0)
 	{
+		/*
 		int sramMaxSize = sramSize + sramSize / 16 + 67;
 		int remainingSpace = 0x10000 - part1_size;
+		*/
 		lzo_uint compressedSize2;
 		int part2_size;
 
@@ -1713,13 +1703,14 @@ int loadstate2(int romNumber, stateheader *sh)
 	
 	uncompressed_save = sram_copy + 0xE000;
 	
-	lzo_uint bytesDecompressed = compressedStateSize;
+	lzo_uint bytesDecompressed = uncompressedStateSize;
 	lzo1x_decompress(src, compressedStateSize, uncompressed_save, &bytesDecompressed, NULL);
+
 	
 	if (uncompressedSramSize > 0)
 	{
-		lzo_uint bytesDecompressed2 = compressedStateSize;
-		lzo1x_decompress(src2, compressedSramSize, XGB_SRAM, &bytesDecompressed2, NULL);
+		lzo_uint bytesDecompressed2 = uncompressedSramSize;
+	lzo1x_decompress(src2, compressedSramSize, XGB_SRAM, &bytesDecompressed2, NULL);
 	}
 	
 	int result = LoadState(uncompressed_save, uncompressedStateSize);
