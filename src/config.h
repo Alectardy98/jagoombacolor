@@ -37,6 +37,8 @@
 #define JOYSTICK_READ_HACKS 0
 //#define EZFLASH_OMEGA_BUILD
 #define EZFLASH_DE_BUILD 1
+#define RAW_SAVES 1
+
 
 #ifdef _MB_VERSION
 	#define RTCSUPPORT 0
