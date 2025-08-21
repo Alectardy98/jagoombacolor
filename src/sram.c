@@ -1,19 +1,4 @@
 #include "includes.h"
-// Hybrid: add bank switching helper for SRAM writes
-#ifndef IWRAM_CODE
-#define IWRAM_CODE
-#endif
-#ifndef SAVE_sram_base
-#define SAVE_sram_base MEM_SRAM
-#endif
-static inline void IWRAM_CODE Bank_Switching(u8 bank)
-{
-    *((vu8 *)(SAVE_sram_base+0x5555)) = 0xAA;
-    *((vu8 *)(SAVE_sram_base+0x2AAA)) = 0x55;
-    *((vu8 *)(SAVE_sram_base+0x5555)) = 0xB0;
-    *((vu8 *)(SAVE_sram_base+0x0000)) = bank;
-}
-
 
 static const int savestate_size_estimate __attribute__((unused)) = 0xC800;
 void cleanup_ewram();
@@ -1031,7 +1016,7 @@ restart:
 		i=findstate(chk,SRAMSAVE,&sh);//find out where to save
 		if(i>=0)
 		{
-			memcpy(compressed_save,sh,sizeof(stateheader));// keep header metadata if present
+			memcpy(compressed_save,sh,sizeof(stateheader));
 			// RAW 32K payload (no compression)
 			memcpy(compressed_save + sizeof(stateheader), XGB_SRAM, 0x8000);
 			lzo_workspace = NULL;
@@ -1207,16 +1192,30 @@ int save_new_sram(u8 *SRAM_SOURCE)
 		getsram();
 	}
 	lzo_workspace = sram_copy + 0xE000;
-	compressed_save = lzo_workspace + 0x10000;
-	current_save_file = (stateheader*) compressed_save;
-	
-	compressstate(sramsize,SRAMSAVE,SRAM_SOURCE,compressed_save,lzo_workspace);
-	int result = updatestates(65536,0,SRAMSAVE);
-	
-	lzo_workspace = NULL;
-	compressed_save = NULL;
-	current_save_file = NULL;
-	return result;
+compressed_save = lzo_workspace + 0x10000;
+current_save_file = (stateheader*) compressed_save;
+// RAW for 32K, compressed for others
+if (sramsize == 0x8000) {
+    stateheader* sh = (stateheader*)compressed_save;
+    memcpy(compressed_save + sizeof(stateheader), SRAM_SOURCE, sramsize);
+    sh->size = ((sizeof(stateheader) + sramsize + 3) & ~3);
+    sh->type = SRAMSAVE;
+    sh->uncompressed_size = sramsize;
+    sh->framecount = frametotal;
+    sh->checksum = checksum_romnum(romnum);
+#if POGOSHELL
+    if (pogoshell) { strcpy(sh->title, pogoshell_romname); }
+    else
+#endif
+    { strncpy(sh->title, (char*)findrom(romnum) + 0x134, 15); }
+} else {
+    compressstate(sramsize, SRAMSAVE, SRAM_SOURCE, compressed_save, lzo_workspace);
+}
+int result = updatestates(65536, 0, SRAMSAVE);
+lzo_workspace = NULL;
+compressed_save = NULL;
+current_save_file = NULL;
+return result;
 }
 
 int get_saved_sram(void)
@@ -1258,11 +1257,16 @@ int get_saved_sram(void)
 		*/
 //		flush_end_sram();
 		
-		if (j >= 0) { // packed SRAM exists: unpack into XGB_SRAM
-  		  lzo_uint comp = sh->size - sizeof(stateheader);   // compressed bytes
-  		  lzo_uint out  = sh->uncompressed_size;            // expected uncompressed bytes
-  		  lzo1x_decompress((u8*)(sh + 1), comp, XGB_SRAM, &out, NULL);
-   		 retval = 1;
+		if (j >= 0) { // packed SRAM exists: raw or compressed
+  lzo_uint comp = sh->size - sizeof(stateheader);   // stored bytes (may include padding)
+  lzo_uint out  = sh->uncompressed_size;            // expected raw size
+  int likely_raw = (comp == out) || (comp > out && comp <= out + 3);
+  if ((g_sramsize==3 || g_sramsize==4) && likely_raw) {
+    memcpy(XGB_SRAM, (u8*)(sh + 1), out);
+  } else {
+    lzo1x_decompress((u8*)(sh + 1), comp, XGB_SRAM, &out, NULL);
+  }
+  retval = 1;
 		} else {
 			save_new_sram(XGB_SRAM);
 			retval=2;
@@ -1281,10 +1285,7 @@ int get_saved_sram(void)
 		}
 		return retval;
 	}
-	else
-	{
-		return 0;
-	}
+	return 0;
 }
 
 void register_sram_owner()
@@ -1749,4 +1750,5 @@ int loadstate2(int romNumber, stateheader *sh)
 
 
 #endif
+
 
