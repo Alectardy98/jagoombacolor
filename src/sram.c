@@ -1,4 +1,19 @@
 #include "includes.h"
+// Hybrid: add bank switching helper for SRAM writes
+#ifndef IWRAM_CODE
+#define IWRAM_CODE
+#endif
+#ifndef SAVE_sram_base
+#define SAVE_sram_base MEM_SRAM
+#endif
+static inline void IWRAM_CODE Bank_Switching(u8 bank)
+{
+    *((vu8 *)(SAVE_sram_base+0x5555)) = 0xAA;
+    *((vu8 *)(SAVE_sram_base+0x2AAA)) = 0x55;
+    *((vu8 *)(SAVE_sram_base+0x5555)) = 0xB0;
+    *((vu8 *)(SAVE_sram_base+0x0000)) = bank;
+}
+
 
 static const int savestate_size_estimate __attribute__((unused)) = 0xC800;
 void cleanup_ewram();
@@ -1011,18 +1026,19 @@ restart:
 	compressed_save = lzo_workspace + 0x10000;
 	current_save_file = (stateheader*)compressed_save;
 	
-	if (called_from==1 && g_sramsize==3 ) //called from UI and 32K sram size
+	if (called_from==1 && (g_sramsize==3 || g_sramsize==4)) //called from UI and 32K sram size
 	{
 		i=findstate(chk,SRAMSAVE,&sh);//find out where to save
 		if(i>=0)
 		{
-			memcpy(compressed_save,sh,sizeof(stateheader));//use old info, in case the rom for this sram is gone and we can't look up its name.
-			lzo1x_1_compress(XGB_SRAM,0x8000,compressed_save+sizeof(stateheader),&compressedsize,lzo_workspace);	//workspace needs to be 64k
+			memcpy(compressed_save,sh,sizeof(stateheader));// keep header metadata if present
+			// RAW 32K payload (no compression)
+			memcpy(compressed_save + sizeof(stateheader), XGB_SRAM, 0x8000);
 			lzo_workspace = NULL;
 			sh=current_save_file;
-			sh->size=(compressedsize+sizeof(stateheader)+3)&~3;	//size of compressed state+header, word aligned
+			sh->size=((sizeof(stateheader) + 0x8000 + 3) & ~3);
 			sh->checksum = chk;
-			sh->uncompressed_size=0x8000;	//size of compressed state
+			sh->uncompressed_size=0x8000;
 			int success = updatestates(i,0,SRAMSAVE);
 			cleanup_ewram();
 			if (!success)
@@ -1733,5 +1749,4 @@ int loadstate2(int romNumber, stateheader *sh)
 
 
 #endif
-
 
